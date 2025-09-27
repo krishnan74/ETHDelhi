@@ -5,12 +5,15 @@ import * as dotenv from "dotenv";
 import { VAULT_DATA, calculateOptimizedSplit } from "./lib/vaultData";
 import { OneInchService } from "./lib/oneInchService";
 import { OrderStatus } from "@1inch/fusion-sdk";
+import { getUniversalLink } from "@selfxyz/core";
+import { SelfAppBuilder } from "@selfxyz/qrcode";
+import { ethers } from "ethers";
 
 // Load environment variables
 dotenv.config();
 
 const BOT_TOKEN =
-  process.env.BOT_TOKEN || "";
+  process.env.BOT_TOKEN || "8388344678:AAGNF_q8if_ZI_iTakTGISEXxu-EAN3tERo";
 const API_BASE_URL = process.env.API_BASE_URL || "http://localhost:3000";
 
 const bot = new Telegraf(BOT_TOKEN);
@@ -517,6 +520,56 @@ bot.command("test1inch", async (ctx) => {
   }
 });
 
+// Self Protocol verification command
+bot.command("verify", async (ctx) => {
+  try {
+    const telegramId = ctx.from.id.toString();
+
+    // Create SelfApp configuration
+    const selfApp = new SelfAppBuilder({
+      version: 2,
+      appName: "Telegram Wallet Bot",
+      scope: "telegram-wallet-bot",
+      endpoint: `${
+        process.env.SELF_URL || "http://localhost:3000"
+      }/api/verify`,
+      logoBase64: "https://i.postimg.cc/mrmVf9hm/self.png",
+      userId: ethers.ZeroAddress,
+      endpointType: "staging_https",
+      userIdType: "hex",
+      userDefinedData: JSON.stringify({
+        telegramUserId: telegramId,
+        timestamp: new Date().toISOString(),
+        purpose: "Identity verification for DeFi access",
+      }),
+      disclosures: {
+        minimumAge: 18,
+        nationality: true,
+        excludedCountries: ["IRN", "PRK", "RUS", "SYR"],
+        ofac: true,
+      },
+    }).build();
+
+    // Generate the deep link
+    const deeplink = getUniversalLink(selfApp);
+
+    const message =
+      `🆔 <b>Identity Verification</b>\n\n` +
+      `🔗 <b>Verification Link:</b>\n` +
+      `<a href="${deeplink}" target="_blank">${deeplink}</a>\n\n` +
+      `📋 <b>Instructions:</b>\n` +
+      `1. Tap the link above to open Self app\n` +
+      `2. Complete your identity verification\n` +
+      `3. Your verification will be processed automatically\n\n` +
+      `⚠️ <b>Note:</b> This verification is required for DeFi access and investment features.`;
+
+    ctx.reply(message, { parse_mode: "HTML" });
+  } catch (error) {
+    console.error("Error generating verification link:", error);
+    ctx.reply("❌ Error generating verification link. Please try again.");
+  }
+});
+
 // Help command
 bot.help((ctx) =>
   ctx.reply(
@@ -534,6 +587,8 @@ bot.help((ctx) =>
       "📊 /quote &lt;from&gt; &lt;to&gt; &lt;amount&gt; - Get swap quote\n" +
       "🔄 /swap &lt;from&gt; &lt;to&gt; &lt;amount&gt; - Execute token swap\n" +
       "🔍 /test1inch - Test 1inch API connection\n\n" +
+      "🆔 <b>Identity Verification:</b>\n" +
+      "🔐 /verify - Identity verification with deeplink\n\n" +
       "❓ /help - Show this help message\n\n" +
       "The bot connects to the wallet API server to manage your Ethereum wallet securely.",
     { parse_mode: "HTML" }

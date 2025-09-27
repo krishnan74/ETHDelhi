@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import { Wallet } from "./lib/Wallet";
+import { SelfBackendVerifier, AllIds, DefaultConfigStore } from "@selfxyz/core";
 import * as dotenv from "dotenv";
 
 // Load environment variables
@@ -11,6 +12,20 @@ const PORT = process.env.PORT || 3000;
 
 // Initialize wallet service
 const walletService = new Wallet();
+
+// Initialize Self Protocol backend verifier
+const selfBackendVerifier = new SelfBackendVerifier(
+  "telegram-wallet-bot",
+  process.env.SELF_URL || "http://localhost:3000" + "/api/verify",
+  false, // mockPassport: false = mainnet, true = staging/testnet
+  AllIds,
+  new DefaultConfigStore({
+    minimumAge: 18,
+    excludedCountries: ["IRN", "PRK", "RUS", "SYR"],
+    ofac: true,
+  }),
+  "uuid" // userIdentifierType
+);
 
 // Middleware
 app.use(cors());
@@ -128,6 +143,60 @@ app.use(
   }
 );
 
+// Self Protocol verification endpoint
+app.post("/api/verify", async (req, res) => {
+  try {
+    // Extract data from the request
+    const { attestationId, proof, publicSignals, userContextData } = req.body;
+
+    // Verify all required fields are present
+    if (!proof || !publicSignals || !attestationId || !userContextData) {
+      return res.status(400).json({
+        success: false,
+        error:
+          "Proof, publicSignals, attestationId and userContextData are required",
+      });
+    }
+
+    // Verify the proof
+    const result = await selfBackendVerifier.verify(
+      attestationId, // Document type (1 = passport, 2 = EU ID card, 3 = Aadhaar)
+      proof, // The zero-knowledge proof
+      publicSignals, // Public signals array
+      userContextData // User context data (hex string)
+    );
+
+    // Check if verification was successful
+    if (result.isValidDetails.isValid) {
+      // Verification successful - process the result
+      res.json({
+        success: true,
+        status: "verified",
+        result: true,
+        credentialSubject: result.discloseOutput,
+        details: result.isValidDetails,
+      });
+    } else {
+      // Verification failed
+      res.status(400).json({
+        success: false,
+        status: "verification_failed",
+        result: false,
+        reason: "Verification failed",
+        error_code: "VERIFICATION_FAILED",
+        details: result.isValidDetails,
+      });
+    }
+  } catch (error) {
+    console.error("Error in verification:", error);
+    res.status(500).json({
+      success: false,
+      error: "Internal server error during verification",
+      details: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+});
+
 // 404 handler
 app.use("*", (req, res) => {
   res.status(404).json({
@@ -144,6 +213,7 @@ app.listen(PORT, () => {
   console.log(`  POST /api/wallet - Create or get wallet`);
   console.log(`  GET /api/wallet/:telegramId - Get wallet details`);
   console.log(`  GET /api/wallet/:telegramId/exists - Check if wallet exists`);
+  console.log(`  POST /api/verify - Self Protocol verification`);
 });
 
 // Graceful shutdown

@@ -13,6 +13,8 @@
   },
   "dependencies": {
     "@1inch/fusion-sdk": "^2.1.12-rc.0",
+    "@selfxyz/core": "^1.1.0-beta.6",
+    "@selfxyz/qrcode": "^1.0.15",
     "@supabase/supabase-js": "^2.39.0",
     "axios": "^1.6.0",
     "cors": "^2.8.5",
