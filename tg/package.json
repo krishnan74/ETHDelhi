@@ -13,6 +13,8 @@
   },
   "dependencies": {
     "@1inch/fusion-sdk": "^2.1.12-rc.0",
+    "@langchain/core": "^0.3.77",
+    "@langchain/openai": "^0.6.13",
     "@selfxyz/core": "^1.1.0-beta.6",
     "@selfxyz/qrcode": "^1.0.15",
     "@supabase/supabase-js": "^2.39.0",
@@ -23,7 +25,9 @@
     "dotenv": "^16.3.1",
     "ethers": "^6.15.0",
     "express": "^4.18.2",
-    "telegraf": "^4.16.3"
+    "langchain": "^0.3.34",
+    "telegraf": "^4.16.3",
+    "zod": "^3.22.4"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",

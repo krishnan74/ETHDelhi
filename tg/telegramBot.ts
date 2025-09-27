@@ -8,6 +8,7 @@ import { OrderStatus } from "@1inch/fusion-sdk";
 import { getUniversalLink } from "@selfxyz/core";
 import { SelfAppBuilder } from "@selfxyz/qrcode";
 import { ethers } from "ethers";
+import { VaultOptimizationAgent } from "./lib/vaultAgent";
 
 // Load environment variables
 dotenv.config();
@@ -26,6 +27,9 @@ const apiClient = axios.create({
 
 // Initialize 1inch service
 const oneInchService = new OneInchService();
+
+// Initialize vault optimization agent
+const vaultAgent = new VaultOptimizationAgent();
 
 // Start command - create or get wallet
 bot.start(async (ctx) => {
@@ -167,52 +171,106 @@ bot.command("vaults", async (ctx) => {
   }
 });
 
-// Optimize investment command
+// Optimize investment command with LangChain agent
 bot.command("optimize", async (ctx) => {
   try {
     const messageText = ctx.message.text;
-    const amount = parseFloat(messageText.split(" ")[1]) || 100; // Default to $100
+    const args = messageText.split(" ");
+    const amount = parseFloat(args[1]) || 100; // Default to $100
+    const riskPreference = args[2] || "Balanced"; // Default to Balanced
 
     if (amount <= 0) {
       ctx.reply("❌ Please enter a valid amount greater than 0.");
       return;
     }
 
-    const optimizedSplit = calculateOptimizedSplit(amount, 3);
-    const totalExpectedYield = optimizedSplit.reduce(
-      (sum, split) => sum + split.expectedYield,
-      0
+    // Validate risk preference
+    const validRiskPreferences = ["Conservative", "Balanced", "Aggressive"];
+    const normalizedRiskPreference = validRiskPreferences.includes(
+      riskPreference
+    )
+      ? riskPreference
+      : "Balanced";
+
+    // Send initial message
+    ctx.reply(
+      "🤖 <b>AI Analysis in Progress...</b>\n\nAnalyzing vault data and optimizing portfolio allocation...",
+      {
+        parse_mode: "HTML",
+      }
     );
-    const overallAPY = (totalExpectedYield / amount) * 100;
 
-    let message = `💰 <b>Optimized Investment Split ($${amount}):</b>\n\n`;
+    // Use LangChain agent for optimization
+    const recommendation = await vaultAgent.getVaultRecommendations(
+      amount,
+      normalizedRiskPreference === "Conservative"
+        ? "Low"
+        : normalizedRiskPreference === "Aggressive"
+        ? "High"
+        : "Medium"
+    );
 
-    optimizedSplit.forEach((split, index) => {
-      const riskEmoji =
-        split.vault.risk === "Low"
-          ? "🟢"
-          : split.vault.risk === "Medium"
-          ? "🟡"
-          : "🔴";
-      message += `${index + 1}. <b>${split.vault.name}</b>\n`;
-      message += `   💵 Amount: $${split.amount.toFixed(2)} (${
-        split.percentage
-      }%)\n`;
-      message += `   📊 APY: ${split.vault.apy}% ${riskEmoji}\n`;
-      message += `   🎯 Expected Yield: $${split.expectedYield.toFixed(2)}\n\n`;
-    });
+    // Send the AI-generated recommendation
+    ctx.reply(recommendation, { parse_mode: "HTML" });
 
-    message += `📈 <b>Total Expected Annual Yield: $${totalExpectedYield.toFixed(
-      2
-    )}</b>\n`;
-    message += `📊 <b>Overall APY: ${overallAPY.toFixed(2)}%</b>\n\n`;
-    message +=
-      "🗳️ Use <code>/poll</code> to create a group poll for investment confirmation!";
+    // Also send a follow-up with poll suggestion
+    const pollMessage =
+      `🗳️ <b>Ready to Invest?</b>\n\n` +
+      `Use <code>/poll ${amount} ${normalizedRiskPreference}</code> to create a group poll for investment confirmation!`;
 
-    ctx.reply(message, { parse_mode: "HTML" });
+    ctx.reply(pollMessage, { parse_mode: "HTML" });
   } catch (error) {
     console.error("Error optimizing investment:", error);
-    ctx.reply("❌ Error calculating optimized split.");
+
+    // Fallback to original algorithm if AI fails
+    try {
+      const messageText = ctx.message.text;
+      const amount = parseFloat(messageText.split(" ")[1]) || 100;
+
+      ctx.reply("⚠️ AI analysis failed, using fallback algorithm...", {
+        parse_mode: "HTML",
+      });
+
+      const optimizedSplit = calculateOptimizedSplit(amount, 3);
+      const totalExpectedYield = optimizedSplit.reduce(
+        (sum, split) => sum + split.expectedYield,
+        0
+      );
+      const overallAPY = (totalExpectedYield / amount) * 100;
+
+      let message = `💰 <b>Fallback Investment Split ($${amount}):</b>\n\n`;
+
+      optimizedSplit.forEach((split, index) => {
+        const riskEmoji =
+          split.vault.risk === "Low"
+            ? "🟢"
+            : split.vault.risk === "Medium"
+            ? "🟡"
+            : "🔴";
+        message += `${index + 1}. <b>${split.vault.name}</b>\n`;
+        message += `   💵 Amount: $${split.amount.toFixed(2)} (${
+          split.percentage
+        }%)\n`;
+        message += `   📊 APY: ${split.vault.apy}% ${riskEmoji}\n`;
+        message += `   🎯 Expected Yield: $${split.expectedYield.toFixed(
+          2
+        )}\n\n`;
+      });
+
+      message += `📈 <b>Total Expected Annual Yield: $${totalExpectedYield.toFixed(
+        2
+      )}</b>\n`;
+      message += `📊 <b>Overall APY: ${overallAPY.toFixed(2)}%</b>\n\n`;
+      message +=
+        "🗳️ Use <code>/poll</code> to create a group poll for investment confirmation!";
+
+      ctx.reply(message, { parse_mode: "HTML" });
+    } catch (fallbackError) {
+      console.error("Fallback algorithm also failed:", fallbackError);
+      ctx.reply(
+        "❌ Error calculating optimized split. Please try again later."
+      );
+    }
   }
 });
 
@@ -530,9 +588,7 @@ bot.command("verify", async (ctx) => {
       version: 2,
       appName: "Telegram Wallet Bot",
       scope: "telegram-wallet-bot",
-      endpoint: `${
-        process.env.SELF_URL || "http://localhost:3000"
-      }/api/verify`,
+      endpoint: `${process.env.SELF_URL || "http://localhost:3000"}/api/verify`,
       logoBase64: "https://i.postimg.cc/mrmVf9hm/self.png",
       userId: ethers.ZeroAddress,
       endpointType: "staging_https",
@@ -580,7 +636,7 @@ bot.help((ctx) =>
       "🏥 /health - Check API server status\n\n" +
       "🏦 <b>Investment Commands:</b>\n" +
       "📊 /vaults - List all available USDC vaults with APY\n" +
-      "💰 /optimize [amount] - Get optimized investment split (default: $100)\n" +
+      "💰 /optimize [amount] [risk] - AI-powered optimized investment split (default: $100, Balanced)\n" +
       "🗳️ /poll [amount] - Create group poll for investment confirmation\n\n" +
       "💱 <b>Swap Commands:</b>\n" +
       "🪙 /tokens - List available tokens for swapping\n" +
