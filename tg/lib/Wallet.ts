@@ -1,6 +1,10 @@
 import { ethers } from "ethers";
 import { supabase } from "../supabaseClient";
-import { encryptPrivateKey, decryptPrivateKey } from "./crypto";
+import {
+  encryptPrivateKey,
+  decryptPrivateKey,
+  decryptWithMultipleKeys,
+} from "./crypto";
 
 export class Wallet {
   // Create a new wallet for a user
@@ -66,8 +70,34 @@ export class Wallet {
         throw new Error("Wallet not found for this Telegram ID");
       }
 
-      // Decrypt the private key
-      const decryptedPrivateKey = decryptPrivateKey(data.private_key);
+      // Decrypt the private key - try with current key first, then fallback keys
+      let decryptedPrivateKey: string;
+      try {
+        decryptedPrivateKey = decryptPrivateKey(data.private_key);
+      } catch (error) {
+        console.log(
+          "Failed to decrypt with current key, trying fallback keys..."
+        );
+        // Try with common fallback keys
+        const fallbackKeys = [
+          "your-32-character-secret-key-here!",
+          "SOME PASSWORD WITH ENCRYPT",
+          "default-encryption-key-32-chars!",
+        ];
+
+        const fallbackResult = decryptWithMultipleKeys(
+          data.private_key,
+          fallbackKeys
+        );
+        if (fallbackResult) {
+          decryptedPrivateKey = fallbackResult;
+          console.log("Successfully decrypted with fallback key");
+        } else {
+          throw new Error(
+            "Failed to decrypt private key with any available keys"
+          );
+        }
+      }
 
       // Create ethers wallet instance from the decrypted private key
       const wallet = new ethers.Wallet(decryptedPrivateKey);

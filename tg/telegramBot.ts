@@ -3,12 +3,14 @@ import { message } from "telegraf/filters";
 import axios from "axios";
 import * as dotenv from "dotenv";
 import { VAULT_DATA, calculateOptimizedSplit } from "./lib/vaultData";
+import { OneInchService } from "./lib/oneInchService";
+import { OrderStatus } from "@1inch/fusion-sdk";
 
 // Load environment variables
 dotenv.config();
 
 const BOT_TOKEN =
-  process.env.BOT_TOKEN || "8388344678:AAGNF_q8if_ZI_iTakTGISEXxu-EAN3tERo";
+  process.env.BOT_TOKEN || "";
 const API_BASE_URL = process.env.API_BASE_URL || "http://localhost:3000";
 
 const bot = new Telegraf(BOT_TOKEN);
@@ -18,6 +20,9 @@ const apiClient = axios.create({
   baseURL: API_BASE_URL,
   timeout: 10000,
 });
+
+// Initialize 1inch service
+const oneInchService = new OneInchService();
 
 // Start command - create or get wallet
 bot.start(async (ctx) => {
@@ -263,6 +268,255 @@ bot.command("poll", async (ctx) => {
   }
 });
 
+// Get swap quote command
+bot.command("quote", async (ctx) => {
+  try {
+    const messageText = ctx.message.text;
+    const args = messageText.split(" ");
+
+    if (args.length < 4) {
+      ctx.reply(
+        "❌ Usage: /quote <from_token> <to_token> <amount>\n\n" +
+          "Example: /quote USDC BNB 10\n" +
+          "Available tokens: USDC, BNB, USDT, WBNB"
+      );
+      return;
+    }
+
+    const fromToken = args[1].toUpperCase();
+    const toToken = args[2].toUpperCase();
+    const amount = parseFloat(args[3]);
+
+    if (isNaN(amount) || amount <= 0) {
+      ctx.reply("❌ Please enter a valid amount greater than 0.");
+      return;
+    }
+
+    // Token address mapping
+    const tokenAddresses: Record<string, string> = {
+      USDC: "0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d",
+      BNB: "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      USDT: "0x55d398326f99059ff775485246999027b3197955",
+      WBNB: "0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c",
+    };
+
+    const fromTokenAddress = tokenAddresses[fromToken];
+    const toTokenAddress = tokenAddresses[toToken];
+
+    if (!fromTokenAddress || !toTokenAddress) {
+      ctx.reply("❌ Invalid token. Available tokens: USDC, BNB, USDT, WBNB");
+      return;
+    }
+
+    // Get user's wallet
+    const telegramId = ctx.from.id.toString();
+    const response = await apiClient.get(`/api/wallet/${telegramId}`);
+
+    if (!response.data.success) {
+      ctx.reply(
+        "❌ You don't have a wallet yet. Use /start to create one first."
+      );
+      return;
+    }
+
+    const walletAddress = response.data.wallet.address;
+    const parsedAmount = oneInchService.parseAmount(
+      amount.toString(),
+      fromTokenAddress
+    );
+
+    const quote = await oneInchService.getQuote({
+      fromTokenAddress,
+      toTokenAddress,
+      amount: parsedAmount,
+      walletAddress,
+      source: "telegram-bot",
+    });
+
+    const fromTokenInfo = oneInchService.getTokenInfo(fromTokenAddress);
+    const toTokenInfo = oneInchService.getTokenInfo(toTokenAddress);
+
+    const message =
+      `💱 <b>Swap Quote</b>\n\n` +
+      `🔄 <b>Swap:</b> ${amount} ${fromTokenInfo.symbol} → ${toTokenInfo.symbol}\n\n` +
+      `📊 <b>Expected Output:</b>\n` +
+      `• Minimum: ${oneInchService.formatAmount(
+        quote.auctionEndAmount,
+        toTokenAddress
+      )} ${toTokenInfo.symbol}\n` +
+      `• Maximum: ${oneInchService.formatAmount(
+        quote.auctionStartAmount,
+        toTokenAddress
+      )} ${toTokenInfo.symbol}\n\n` +
+      `💡 Use <code>/swap ${fromToken} ${toToken} ${amount}</code> to execute this swap.`;
+
+    ctx.reply(message, { parse_mode: "HTML" });
+  } catch (error) {
+    console.error("Error getting quote:", error);
+    ctx.reply("❌ Error getting swap quote. Please try again.");
+  }
+});
+
+// Execute swap command
+bot.command("swap", async (ctx) => {
+  try {
+    const messageText = ctx.message.text;
+    const args = messageText.split(" ");
+
+    if (args.length < 4) {
+      ctx.reply(
+        "❌ Usage: /swap <from_token> <to_token> <amount>\n\n" +
+          "Example: /swap USDC BNB 10\n" +
+          "Available tokens: USDC, BNB, USDT, WBNB"
+      );
+      return;
+    }
+
+    const fromToken = args[1].toUpperCase();
+    const toToken = args[2].toUpperCase();
+    const amount = parseFloat(args[3]);
+
+    if (isNaN(amount) || amount <= 0) {
+      ctx.reply("❌ Please enter a valid amount greater than 0.");
+      return;
+    }
+
+    // Token address mapping
+    const tokenAddresses: Record<string, string> = {
+      USDC: "0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d",
+      BNB: "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      USDT: "0x55d398326f99059ff775485246999027b3197955",
+      WBNB: "0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c",
+    };
+
+    const fromTokenAddress = tokenAddresses[fromToken];
+    const toTokenAddress = tokenAddresses[toToken];
+
+    if (!fromTokenAddress || !toTokenAddress) {
+      ctx.reply("❌ Invalid token. Available tokens: USDC, BNB, USDT, WBNB");
+      return;
+    }
+
+    // Get user's wallet
+    const telegramId = ctx.from.id.toString();
+    const response = await apiClient.get(`/api/wallet/${telegramId}`);
+
+    if (!response.data.success) {
+      ctx.reply(
+        "❌ You don't have a wallet yet. Use /start to create one first."
+      );
+      return;
+    }
+
+    const walletData = response.data.wallet;
+    const walletAddress = walletData.address;
+    const parsedAmount = oneInchService.parseAmount(
+      amount.toString(),
+      fromTokenAddress
+    );
+
+    // Send initial message
+    const processingMsg = await ctx.reply(
+      "⏳ Processing swap... This may take a few minutes."
+    );
+
+    const result = await oneInchService.executeSwap(
+      {
+        fromTokenAddress,
+        toTokenAddress,
+        amount: parsedAmount,
+        walletAddress,
+        source: "telegram-bot",
+      },
+      walletData.privateKey || "" // This should be handled securely in production
+    );
+
+    const fromTokenInfo = oneInchService.getTokenInfo(fromTokenAddress);
+    const toTokenInfo = oneInchService.getTokenInfo(toTokenAddress);
+
+    let message =
+      `💱 <b>Swap Result</b>\n\n` +
+      `🔄 <b>Swap:</b> ${amount} ${fromTokenInfo.symbol} → ${toTokenInfo.symbol}\n` +
+      `📋 <b>Order Hash:</b> <code>${result.orderHash}</code>\n\n`;
+
+    if (result.status === OrderStatus.Filled) {
+      message += `✅ <b>Status:</b> Successfully filled\n`;
+      if (result.fills && result.fills.length > 0) {
+        message += `💰 <b>Received:</b> ${oneInchService.formatAmount(
+          result.fills[0].amount,
+          toTokenAddress
+        )} ${toTokenInfo.symbol}\n`;
+      }
+    } else if (result.status === OrderStatus.Expired) {
+      message += `⏰ <b>Status:</b> Order expired\n`;
+    } else if (result.status === OrderStatus.Cancelled) {
+      message += `❌ <b>Status:</b> Order cancelled\n`;
+    }
+
+    if (result.error) {
+      message += `\n❌ <b>Error:</b> ${result.error}`;
+    }
+
+    // Edit the processing message
+    await ctx.telegram.editMessageText(
+      ctx.chat.id,
+      processingMsg.message_id,
+      undefined,
+      message,
+      { parse_mode: "HTML" }
+    );
+  } catch (error) {
+    console.error("Error executing swap:", error);
+    ctx.reply("❌ Error executing swap. Please try again.");
+  }
+});
+
+// List available tokens command
+bot.command("tokens", async (ctx) => {
+  const message =
+    `🪙 <b>Available Tokens for Swapping</b>\n\n` +
+    `• <b>USDC</b> - USD Coin\n` +
+    `• <b>BNB</b> - Binance Coin\n` +
+    `• <b>USDT</b> - Tether USD\n` +
+    `• <b>WBNB</b> - Wrapped BNB\n\n` +
+    `💡 <b>Usage:</b>\n` +
+    `• <code>/quote USDC BNB 10</code> - Get quote\n` +
+    `• <code>/swap USDC BNB 10</code> - Execute swap\n\n` +
+    `⚠️ <b>Note:</b> Swaps are executed on BSC network.`;
+
+  ctx.reply(message, { parse_mode: "HTML" });
+});
+
+// Test 1inch API connection
+bot.command("test1inch", async (ctx) => {
+  try {
+    const testMsg = await ctx.reply("🔍 Testing 1inch API connection...");
+
+    const isConnected = await oneInchService.testConnection();
+
+    if (isConnected) {
+      await ctx.telegram.editMessageText(
+        ctx.chat.id,
+        testMsg.message_id,
+        undefined,
+        "✅ 1inch API connection successful!\n\nYou can now use swap commands.",
+        { parse_mode: "HTML" }
+      );
+    } else {
+      await ctx.telegram.editMessageText(
+        ctx.chat.id,
+        testMsg.message_id,
+        undefined,
+        "❌ 1inch API connection failed.\n\nPlease check:\n• API key configuration\n• Network connectivity\n• 1inch service status",
+        { parse_mode: "HTML" }
+      );
+    }
+  } catch (error) {
+    console.error("Error testing 1inch connection:", error);
+    ctx.reply("❌ Error testing 1inch API connection.");
+  }
+});
+
 // Help command
 bot.help((ctx) =>
   ctx.reply(
@@ -275,6 +529,11 @@ bot.help((ctx) =>
       "📊 /vaults - List all available USDC vaults with APY\n" +
       "💰 /optimize [amount] - Get optimized investment split (default: $100)\n" +
       "🗳️ /poll [amount] - Create group poll for investment confirmation\n\n" +
+      "💱 <b>Swap Commands:</b>\n" +
+      "🪙 /tokens - List available tokens for swapping\n" +
+      "📊 /quote &lt;from&gt; &lt;to&gt; &lt;amount&gt; - Get swap quote\n" +
+      "🔄 /swap &lt;from&gt; &lt;to&gt; &lt;amount&gt; - Execute token swap\n" +
+      "🔍 /test1inch - Test 1inch API connection\n\n" +
       "❓ /help - Show this help message\n\n" +
       "The bot connects to the wallet API server to manage your Ethereum wallet securely.",
     { parse_mode: "HTML" }
