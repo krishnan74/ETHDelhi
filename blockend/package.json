@@ -1,0 +1,15 @@
+{
+  "name": "hardhat-project",
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "hardhat": "^2.26.3"
+  },
+  "dependencies": {
+    "@pythnetwork/hermes-client": "^2.0.0",
+    "@pythnetwork/pyth-sdk-solidity": "^4.2.0",
+    "dotenv": "^17.2.2",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.2",
+    "viem": "^2.37.8"
+  }
+}
