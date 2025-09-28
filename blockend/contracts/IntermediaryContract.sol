@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
 
-import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -178,10 +178,7 @@ contract IntermediaryContract is ReentrancyGuard, Ownable {
         for (uint256 i = 0; i < plan.vaults.length; i++) {
             if (plan.amounts[i] > 0) {
                 // Approve vault to spend tokens
-                IERC20(plan.tokens[i]).safeApprove(
-                    plan.vaults[i],
-                    plan.amounts[i]
-                );
+                IERC20(plan.tokens[i]).approve(plan.vaults[i], plan.amounts[i]);
 
                 // Deposit to vault
                 IMorphoVault(plan.vaults[i]).deposit(

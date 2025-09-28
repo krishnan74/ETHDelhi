@@ -16,6 +16,7 @@
     "@langchain/core": "^0.3.77",
     "@langchain/groq": "^0.2.4",
     "@langchain/openai": "^0.6.13",
+    "@openzeppelin/contracts": "^5.4.0",
     "@selfxyz/core": "^1.1.0-beta.6",
     "@selfxyz/qrcode": "^1.0.15",
     "@supabase/supabase-js": "^2.39.0",

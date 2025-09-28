@@ -2,187 +2,9 @@ import { ethers } from "ethers";
 import { Wallet } from "./Wallet";
 import { Vault, OptimizedSplit } from "./vaultData";
 import * as dotenv from "dotenv";
-
+import contractInfo from  "../../blockend/artifacts/contracts/IntermediaryContract.sol/IntermediaryContract.json"
 // Load environment variables
 dotenv.config();
-
-// Intermediary Contract ABI (simplified)
-const INTERMEDIARY_ABI = [
-  {
-    inputs: [
-      {
-        internalType: "address[]",
-        name: "_vaults",
-        type: "address[]",
-      },
-      {
-        internalType: "uint256[]",
-        name: "_amounts",
-        type: "uint256[]",
-      },
-      {
-        internalType: "address[]",
-        name: "_tokens",
-        type: "address[]",
-      },
-      {
-        internalType: "address[]",
-        name: "_members",
-        type: "address[]",
-      },
-      {
-        internalType: "uint256",
-        name: "_totalAmount",
-        type: "uint256",
-      },
-    ],
-    name: "createInvestmentPlan",
-    outputs: [
-      {
-        internalType: "uint256",
-        name: "",
-        type: "uint256",
-      },
-    ],
-    stateMutability: "nonpayable",
-    type: "function",
-  },
-  {
-    inputs: [
-      {
-        internalType: "uint256",
-        name: "_planId",
-        type: "uint256",
-      },
-      {
-        internalType: "address",
-        name: "_token",
-        type: "address",
-      },
-      {
-        internalType: "uint256",
-        name: "_amount",
-        type: "uint256",
-      },
-    ],
-    name: "contributeToPlan",
-    outputs: [],
-    stateMutability: "nonpayable",
-    type: "function",
-  },
-  {
-    inputs: [
-      {
-        internalType: "uint256",
-        name: "_planId",
-        type: "uint256",
-      },
-    ],
-    name: "executeInvestmentPlan",
-    outputs: [],
-    stateMutability: "nonpayable",
-    type: "function",
-  },
-  {
-    inputs: [
-      {
-        internalType: "uint256",
-        name: "_planId",
-        type: "uint256",
-      },
-    ],
-    name: "canExecutePlan",
-    outputs: [
-      {
-        internalType: "bool",
-        name: "",
-        type: "bool",
-      },
-    ],
-    stateMutability: "view",
-    type: "function",
-  },
-  {
-    inputs: [
-      {
-        internalType: "uint256",
-        name: "_planId",
-        type: "uint256",
-      },
-    ],
-    name: "getPlanDetails",
-    outputs: [
-      {
-        internalType: "address[]",
-        name: "vaults",
-        type: "address[]",
-      },
-      {
-        internalType: "uint256[]",
-        name: "amounts",
-        type: "uint256[]",
-      },
-      {
-        internalType: "address[]",
-        name: "tokens",
-        type: "address[]",
-      },
-      {
-        internalType: "uint256",
-        name: "totalAmount",
-        type: "uint256",
-      },
-      {
-        internalType: "bool",
-        name: "executed",
-        type: "bool",
-      },
-      {
-        internalType: "uint256",
-        name: "deadline",
-        type: "uint256",
-      },
-    ],
-    stateMutability: "view",
-    type: "function",
-  },
-  {
-    inputs: [
-      {
-        internalType: "uint256",
-        name: "_planId",
-        type: "uint256",
-      },
-    ],
-    name: "getPlanContributions",
-    outputs: [
-      {
-        components: [
-          {
-            internalType: "address",
-            name: "member",
-            type: "address",
-          },
-          {
-            internalType: "uint256",
-            name: "amount",
-            type: "uint256",
-          },
-          {
-            internalType: "bool",
-            name: "contributed",
-            type: "bool",
-          },
-        ],
-        internalType: "struct IntermediaryContract.MemberContribution[]",
-        name: "",
-        type: "tuple[]",
-      },
-    ],
-    stateMutability: "view",
-    type: "function",
-  },
-];
 
 // ERC20 ABI for token approval
 const ERC20_ABI = [
@@ -286,7 +108,8 @@ export class IntermediaryService {
   private contract: ethers.Contract;
 
   constructor() {
-    this.rpcUrl = process.env.ETHEREUM_RPC_URL || "https://eth.llamarpc.com";
+    this.rpcUrl =
+      process.env.BASE_SEPOLIA_RPC_URL || "https://eth.llamarpc.com";
     this.contractAddress =
       process.env.INTERMEDIARY_CONTRACT_ADDRESS ||
       "0x0000000000000000000000000000000000000000";
@@ -300,7 +123,7 @@ export class IntermediaryService {
     ) {
       this.contract = new ethers.Contract(
         this.contractAddress,
-        INTERMEDIARY_ABI,
+        contractInfo.abi,
         this.provider
       ) as any; // Type assertion to bypass TypeScript ABI typing issues
     } else {
@@ -351,6 +174,33 @@ export class IntermediaryService {
         };
       }
 
+      // Get owner wallet for contract interaction
+      const ownerWallet = await this.walletService.getWallet(ownerTelegramId);
+      const ownerEthersWallet = new ethers.Wallet(
+        ownerWallet.privateKey,
+        this.provider
+      );
+      const contractWithSigner = this.contract.connect(ownerEthersWallet);
+
+      // Convert Telegram IDs to wallet addresses
+      const memberWalletAddresses = [];
+      for (const telegramId of memberAddresses) {
+        try {
+          const memberWallet = await this.walletService.getWallet(telegramId);
+          memberWalletAddresses.push(memberWallet.address);
+        } catch (error) {
+          console.error(
+            `Failed to get wallet for Telegram ID ${telegramId}:`,
+            error
+          );
+          return {
+            success: false,
+            message: `Failed to get wallet for member ${telegramId}`,
+            error: "Member wallet not found",
+          };
+        }
+      }
+
       // Prepare plan data
       const vaults = optimizedSplit.map((split) => split.vault.address!);
       const amounts = optimizedSplit.map((split) =>
@@ -362,22 +212,14 @@ export class IntermediaryService {
       const tokens = optimizedSplit.map(
         (split) => split.vault.underlyingAsset!.address
       );
-      const totalAmountAtomic = this.toAtomicAmount(totalAmount.toString(), 18); // Assuming USDC (6 decimals)
-
-      // Get owner wallet for contract interaction
-      const ownerWallet = await this.walletService.getWallet(ownerTelegramId);
-      const ownerEthersWallet = new ethers.Wallet(
-        ownerWallet.privateKey,
-        this.provider
-      );
-      const contractWithSigner = this.contract.connect(ownerEthersWallet);
+      const totalAmountAtomic = this.toAtomicAmount(totalAmount.toString(), 6); // USDC has 6 decimals
 
       // Create the investment plan
       const tx = await (contractWithSigner as any).createInvestmentPlan(
         vaults,
         amounts,
         tokens,
-        memberAddresses,
+        memberWalletAddresses,
         totalAmountAtomic
       );
 
