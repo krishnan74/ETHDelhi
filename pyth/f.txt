@@ -1,0 +1,50 @@
+forge create src/MyFirstPythContract.sol:MyFirstPythContract \
+--private-key "e9fab966e2f56c4830d0ce5b4a75ec6ff2850575054aadf0e6f60ee6380f8b01" \
+--rpc-url "https://sepolia.base.org" \
+--broadcast \
+--constructor-args "0xA2aa501b19aff244D90cc15a4Cf739D2725B5729" "0xff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace"
+
+
+
+cast send \
+  --private-key "e9fab966e2f56c4830d0ce5b4a75ec6ff2850575054aadf0e6f60ee6380f8b01" \
+  --rpc-url "https://sepolia.base.org" \
+  -j 1 \
+  --value 0.0005ether \
+  "0xc1f209B028c1c71Fba3Ccd4a213608CdD21Bb7C5" \
+  "updateAndMint(bytes[])" \
+  [0x`cat price_update.txt`]
+
+-------------------------------------------------------------------------------------------------------
+
+forge create src/morpho-pyth/MorphoPythOracleFactory.sol:MorphoPythOracleFactory \
+--private-key "e9fab966e2f56c4830d0ce5b4a75ec6ff2850575054aadf0e6f60ee6380f8b01" \
+--rpc-url "https://sepolia.base.org" 
+
+forge create src/morpho-pyth/MorphoPythOracleFactory.sol:MorphoPythOracleFactory \  
+--private-key "e9fab966e2f56c4830d0ce5b4a75ec6ff2850575054aadf0e6f60ee6380f8b01" \
+--rpc-url "https://sepolia.base.org" \
+--broadcast
+
+
+
+forge create src/morpho-pyth/MorphoPythOracleFactory.sol:MorphoPythOracleFactory \  
+--broadcast \
+--private-key "e9fab966e2f56c4830d0ce5b4a75ec6ff2850575054aadf0e6f60ee6380f8b01" \
+--rpc-url "https://sepolia.base.org" \
+
+
+No files changed, compilation skipped
+Deployer: 0x82f3165CcDFF0B258474b03500A0916B7E75f96E
+Deployed to: 0xc996f1BeA6A0AB392E3799E264B5803AC800Bd93
+Transaction hash: 0xc5dfe8a7801069ab2eefa025b7ff5229dd3d4ac9690f1d1e4fa8f29d69607429
+
+
+
+pyth-morpho-wrapper && forge create src/morpho-pyth/MorphoPythOracleFactory.sol:MorphoPythOracleFactory --private-key "e9fab966e2f56c4830d0ce5b4a75ec6ff2850575054aadf0e6f60ee6380f8b01" --rpc-url "https://sepolia.base.org" --broadcast
+
+
+No files changed, compilation skipped
+Deployer: 0x82f3165CcDFF0B258474b03500A0916B7E75f96E
+Deployed to: 0x02FEA28F53C49e157fE9b7Cbee343e898A5E0ed8
+Transaction hash: 0x369c3ea66a9e826e3eb4fa53d04a9ac050fd4e9be7ce535f667b494da3dbf4b0
