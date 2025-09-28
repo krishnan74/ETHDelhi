@@ -5,9 +5,28 @@ export interface Vault {
   protocol: string;
   risk: "Low" | "Medium" | "High";
   description: string;
+  address?: string;
+  totalAssets?: string;
+  totalAssetsUsd?: string;
+  liquidity?: {
+    underlying: string;
+    usd: string;
+  };
+  riskScore?: number;
+  warnings?: {
+    type: string;
+    level: string;
+  }[];
+  curators?: {
+    name: string;
+    image: string;
+    url: string;
+    verified: boolean;
+  }[];
 }
 
-export const VAULT_DATA: Vault[] = [
+// Mock data as fallback
+export const MOCK_VAULT_DATA: Vault[] = [
   {
     name: "Pyth USDC",
     symbol: "pythUSDC",
@@ -105,12 +124,28 @@ export interface OptimizedSplit {
   expectedYield: number;
 }
 
+// Function to get vault data (live or mock)
+export async function getVaultData(): Promise<Vault[]> {
+  try {
+    const { MorphoService } = await import("./morphoService");
+    const morphoService = new MorphoService();
+    const morphoVaults = await morphoService.fetchAllVaults();
+
+    // Convert Morpho vaults to our format
+    return morphoVaults.map((vault) => morphoService.convertToVault(vault));
+  } catch (error) {
+    console.error("Failed to fetch live vault data, using mock data:", error);
+    return MOCK_VAULT_DATA;
+  }
+}
+
 export function calculateOptimizedSplit(
   totalAmount: number,
-  numVaults: number = 3
+  numVaults: number = 3,
+  vaultData: Vault[] = MOCK_VAULT_DATA
 ): OptimizedSplit[] {
   // Sort vaults by APY (highest first)
-  const sortedVaults = [...VAULT_DATA].sort((a, b) => b.apy - a.apy);
+  const sortedVaults = [...vaultData].sort((a, b) => b.apy - a.apy);
 
   // Take top vaults with different risk levels for diversification
   const selectedVaults: Vault[] = [];

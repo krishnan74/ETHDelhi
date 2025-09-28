@@ -2,7 +2,7 @@ import { Telegraf } from "telegraf";
 import { message } from "telegraf/filters";
 import axios from "axios";
 import * as dotenv from "dotenv";
-import { VAULT_DATA, calculateOptimizedSplit } from "./lib/vaultData";
+import { getVaultData, calculateOptimizedSplit } from "./lib/vaultData";
 import { OneInchService } from "./lib/oneInchService";
 import { OrderStatus } from "@1inch/fusion-sdk";
 import { getUniversalLink } from "@selfxyz/core";
@@ -148,21 +148,35 @@ bot.command("health", async (ctx) => {
 // List vaults command
 bot.command("vaults", async (ctx) => {
   try {
-    let message = "🏦 <b>Available USDC Vaults:</b>\n\n";
+    // Send loading message
+    ctx.reply("🔄 <b>Fetching live vault data...</b>", { parse_mode: "HTML" });
 
-    // Sort by APY (highest first)
-    const sortedVaults = [...VAULT_DATA].sort((a, b) => b.apy - a.apy);
+    // Fetch live vault data
+    const vaultData = await getVaultData();
 
-    sortedVaults.forEach((vault, index) => {
+    let message = "🏦 <b>Available Vaults (Live Data):</b>\n\n";
+
+    // Sort by APY (highest first) and show top 10
+    const sortedVaults = [...vaultData].sort((a, b) => b.apy - a.apy);
+
+    sortedVaults.slice(0, 10).forEach((vault, index) => {
       const riskEmoji =
         vault.risk === "Low" ? "🟢" : vault.risk === "Medium" ? "🟡" : "🔴";
       message += `${index + 1}. <b>${vault.name}</b> (${vault.symbol})\n`;
-      message += `   📊 APY: <b>${vault.apy}%</b> ${riskEmoji} ${vault.risk} Risk\n`;
-      message += `   🏛️ Protocol: ${vault.protocol}\n\n`;
+      message += `   📊 APY: <b>${vault.apy.toFixed(2)}%</b> ${riskEmoji} ${
+        vault.risk
+      } Risk\n`;
+      message += `   🏛️ Protocol: ${vault.protocol}\n`;
+      if (vault.totalAssetsUsd) {
+        message += `   💰 TVL: $${parseFloat(
+          vault.totalAssetsUsd
+        ).toLocaleString()}\n`;
+      }
+      message += `\n`;
     });
 
     message +=
-      "💡 Use <code>/optimize [amount]</code> to get an optimized investment split!";
+      "💡 Use <code>/optimize [amount] [risk]</code> to get an AI-powered optimized investment split!";
 
     ctx.reply(message, { parse_mode: "HTML" });
   } catch (error) {
@@ -231,7 +245,8 @@ bot.command("optimize", async (ctx) => {
         parse_mode: "HTML",
       });
 
-      const optimizedSplit = calculateOptimizedSplit(amount, 3);
+      const vaultData = await getVaultData();
+      const optimizedSplit = calculateOptimizedSplit(amount, 3, vaultData);
       const totalExpectedYield = optimizedSplit.reduce(
         (sum, split) => sum + split.expectedYield,
         0
@@ -280,7 +295,8 @@ bot.command("poll", async (ctx) => {
     const messageText = ctx.message.text;
     const amount = parseFloat(messageText.split(" ")[1]) || 100;
 
-    const optimizedSplit = calculateOptimizedSplit(amount, 3);
+    const vaultData = await getVaultData();
+    const optimizedSplit = calculateOptimizedSplit(amount, 3, vaultData);
     const totalExpectedYield = optimizedSplit.reduce(
       (sum, split) => sum + split.expectedYield,
       0

@@ -1,7 +1,8 @@
 import { ChatOpenAI } from "@langchain/openai";
+import { ChatGroq } from "@langchain/groq";
 import { PromptTemplate } from "@langchain/core/prompts";
 import * as dotenv from "dotenv";
-import { Vault, VAULT_DATA } from "./vaultData";
+import { Vault, getVaultData } from "./vaultData";
 
 // Load environment variables
 dotenv.config();
@@ -44,14 +45,14 @@ export interface VaultOptimizationResult {
 }
 
 export class VaultOptimizationAgent {
-  private llm: ChatOpenAI;
+  private llm: ChatGroq;
 
   constructor() {
     // Initialize the LLM
-    this.llm = new ChatOpenAI({
-      model: "gpt-4",
+    this.llm = new ChatGroq({
+      model: "openai/gpt-oss-20b",
       temperature: 0.3,
-      openAIApiKey: process.env.OPENAI_API_KEY,
+      apiKey: process.env.GROQ_API_KEY,
     });
   }
 
@@ -61,11 +62,16 @@ export class VaultOptimizationAgent {
     maxVaults: number = 3,
     timeHorizon: string = "1 year"
   ): Promise<VaultOptimizationResult> {
+    // Fetch live vault data
+    const vaultData = await getVaultData();
+
     // Prepare the vault data for the prompt
-    const vaultDataString = VAULT_DATA.map(
-      (vault) =>
-        `- ${vault.name} (${vault.symbol}): ${vault.apy}% APY, ${vault.risk} risk, ${vault.protocol} protocol\n  Description: ${vault.description}`
-    ).join("\n");
+    const vaultDataString = vaultData
+      .map(
+        (vault) =>
+          `- ${vault.name} (${vault.symbol}): ${vault.apy}% APY, ${vault.risk} risk, ${vault.protocol} protocol\n  Description: ${vault.description}`
+      )
+      .join("\n");
 
     // Create the prompt
     const prompt = `
