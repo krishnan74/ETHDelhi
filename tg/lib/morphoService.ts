@@ -3,10 +3,10 @@ import * as dotenv from "dotenv";
 // Load environment variables
 dotenv.config();
 
-// GraphQL query for fetching Morpho vaults
+// GraphQL query for fetching Morpho vaults (no filtering)
 const LIST_CHAIN_ASSET_VAULTS_QUERY = `
-query ListChainAssetVaults($skip: Int!, $chainId: Int!, $assetAddress: String!) {
-  vaults(first: 1000, skip: $skip, where: {chainId_in: [$chainId], assetAddress_in: [$assetAddress]}) {
+query ListChainAssetVaults($skip: Int!, $first: Int!) {
+  vaults(first: $first, skip: $skip) {
     items {
       id
       name
@@ -54,6 +54,18 @@ query ListChainAssetVaults($skip: Int!, $chainId: Int!, $assetAddress: String!) 
           removableAt
           market {
             id
+            loanAsset {
+              id
+              address
+              decimals
+              name
+              symbol
+              tags
+              logoURI
+              priceUsd
+              oraclePriceUsd
+              spotPriceEth
+            }
           }
         }
         rewards {
@@ -173,8 +185,20 @@ export interface MorphoVault {
       removableAt: string;
       market: {
         id: string;
+        loanAsset: {
+          id: string;
+          address: string;
+          decimals: string;
+          name: string;
+          symbol: string;
+          tags: string[];
+          logoURI: string;
+          priceUsd: string;
+          oraclePriceUsd: string;
+          spotPriceEth: string;
+        };
       };
-    };
+    }[];
     rewards: {
       yearlySupplyTokens: string;
       supplyApr: string;
@@ -217,7 +241,7 @@ export interface MorphoVault {
     score: number;
     isUnderReview: boolean;
     timestamp: string;
-  };
+  }[];
   warnings: {
     type: string;
     level: string;
@@ -257,9 +281,9 @@ export class MorphoService {
   }
 
   async fetchVaults(
-    chainId: number = 1, // Ethereum mainnet
-    assetAddress: string = "0xA0b86a33E6441b8c4C8C0C4C0C4C0C4C0C4C0C4C", // USDC address (placeholder)
-    skip: number = 0
+    skip: number = 0,
+    first: number = 1000,
+    riskLevel?: "Low" | "Medium" | "High"
   ): Promise<MorphoVault[]> {
     try {
       const response = await fetch(this.apiUrl, {
@@ -271,8 +295,7 @@ export class MorphoService {
           query: LIST_CHAIN_ASSET_VAULTS_QUERY,
           variables: {
             skip,
-            chainId,
-            assetAddress,
+            first,
           },
         }),
       });
@@ -291,7 +314,28 @@ export class MorphoService {
         throw new Error("Invalid GraphQL response structure");
       }
 
-      return data.data.vaults.items;
+      let vaults = data.data.vaults.items;
+
+      // Filter by risk level client-side based on APY
+      if (riskLevel) {
+        vaults = vaults.filter((vault) => {
+          const apyValue = vault.state?.apy || "0";
+          const apy = parseFloat(String(apyValue)) * 100; // Convert to percentage
+
+          switch (riskLevel) {
+            case "Low":
+              return apy < 5; // 0-5% APY
+            case "Medium":
+              return apy >= 5 && apy <= 15; // 5-15% APY
+            case "High":
+              return apy > 15; // 15%+ APY
+            default:
+              return true;
+          }
+        });
+      }
+
+      return vaults;
     } catch (error) {
       console.error("Error fetching Morpho vaults:", error);
       throw new Error(
@@ -302,58 +346,77 @@ export class MorphoService {
     }
   }
 
-  async fetchAllVaults(chainId: number = 1): Promise<MorphoVault[]> {
+  async fetchVaultsByRisk(
+    riskLevel: "Low" | "Medium" | "High",
+    limit: number = 20
+  ): Promise<MorphoVault[]> {
     try {
-      const allVaults: MorphoVault[] = [];
-      let skip = 0;
-      let hasMore = true;
-
-      while (hasMore) {
-        const vaults = await this.fetchVaults(chainId, "", skip);
-
-        if (vaults.length === 0) {
-          hasMore = false;
-        } else {
-          allVaults.push(...vaults);
-          skip += 1000; // Assuming 1000 is the limit per request
-        }
-      }
-
-      console.log("All vaults:", allVaults);    
-
-      return allVaults;
+      // Fetch more vaults to ensure we get enough after filtering
+      const vaults = await this.fetchVaults(0, 200, riskLevel);
+      const limitedVaults = vaults.slice(0, limit);
+      console.log(
+        `Found ${limitedVaults.length} ${riskLevel} risk vaults (from ${vaults.length} total)`
+      );
+      return limitedVaults;
     } catch (error) {
-      console.error("Error fetching all vaults:", error);
+      console.error(`Error fetching ${riskLevel} risk vaults:`, error);
+      throw error;
+    }
+  }
+
+  async fetchVaultsPaginated(
+    riskLevel: "Low" | "Medium" | "High",
+    page: number = 1,
+    pageSize: number = 10
+  ): Promise<{ vaults: MorphoVault[]; totalCount: number; hasMore: boolean }> {
+    try {
+      // Fetch all vaults for this risk level first
+      const allVaults = await this.fetchVaults(0, 500, riskLevel);
+
+      // Calculate pagination
+      const startIndex = (page - 1) * pageSize;
+      const endIndex = startIndex + pageSize;
+      const vaults = allVaults.slice(startIndex, endIndex);
+      const hasMore = endIndex < allVaults.length;
+
+      return {
+        vaults,
+        totalCount: allVaults.length,
+        hasMore,
+      };
+    } catch (error) {
+      console.error(
+        `Error fetching paginated ${riskLevel} risk vaults:`,
+        error
+      );
       throw error;
     }
   }
 
   // Convert Morpho vault to our Vault interface
   convertToVault(morphoVault: MorphoVault): any {
-    const apy = parseFloat(morphoVault.state.apy) || 0;
-    const netApy = parseFloat(morphoVault.state.netApy) || 0;
+    const apy = parseFloat(String(morphoVault.state.apy || "0"));
+    const netApy = parseFloat(String(morphoVault.state.netApy || "0"));
+    const apyPercent = apy * 100; // Convert to percentage
 
-    // Determine risk level based on APY and risk analysis
+    // Determine risk level based on APY (since risk analysis is empty)
     let risk: "Low" | "Medium" | "High" = "Medium";
-    if (morphoVault.riskAnalysis && morphoVault.riskAnalysis.score) {
-      if (morphoVault.riskAnalysis.score >= 8) {
-        risk = "Low";
-      } else if (morphoVault.riskAnalysis.score <= 4) {
-        risk = "High";
-      }
+    if (apyPercent < 5) {
+      risk = "Low";
+    } else if (apyPercent > 15) {
+      risk = "High";
     } else {
-      // Fallback risk assessment based on APY
-      if (apy < 5) {
-        risk = "Low";
-      } else if (apy > 15) {
-        risk = "High";
-      }
+      risk = "Medium";
     }
+
+    // Get the first allocation's loan asset for deposit info
+    const firstAllocation = morphoVault.state.allocation?.[0];
+    const underlyingAsset = firstAllocation?.market?.loanAsset;
 
     return {
       name: morphoVault.name,
       symbol: morphoVault.symbol,
-      apy: netApy || apy, // Use net APY if available, otherwise use gross APY
+      apy: apyPercent, // Convert to percentage for display
       protocol: "Morpho",
       risk,
       description:
@@ -363,9 +426,20 @@ export class MorphoService {
       totalAssets: morphoVault.state.totalAssets,
       totalAssetsUsd: morphoVault.state.totalAssetsUsd,
       liquidity: morphoVault.liquidity,
-      riskScore: morphoVault.riskAnalysis?.score || 5,
+      riskScore: risk === "Low" ? 8 : risk === "High" ? 3 : 5, // Assign risk scores based on APY
       warnings: morphoVault.warnings,
       curators: morphoVault.metadata?.curators || [],
+      // Deposit-related fields
+      underlyingAsset: underlyingAsset
+        ? {
+            address: underlyingAsset.address,
+            symbol: underlyingAsset.symbol,
+            name: underlyingAsset.name,
+            decimals: parseInt(underlyingAsset.decimals),
+          }
+        : undefined,
+      sharePrice: morphoVault.state.sharePrice,
+      totalSupply: morphoVault.state.totalSupply,
     };
   }
 }

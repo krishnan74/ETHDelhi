@@ -2,7 +2,13 @@ import { Telegraf } from "telegraf";
 import { message } from "telegraf/filters";
 import axios from "axios";
 import * as dotenv from "dotenv";
-import { getVaultData, calculateOptimizedSplit } from "./lib/vaultData";
+import {
+  getVaultDataByRisk,
+  getVaultDataPaginated,
+  calculateOptimizedSplit,
+} from "./lib/vaultData";
+import { MorphoDepositService } from "./lib/morphoDepositService";
+import { IntermediaryService } from "./lib/intermediaryService";
 import { OneInchService } from "./lib/oneInchService";
 import { OrderStatus } from "@1inch/fusion-sdk";
 import { getUniversalLink } from "@selfxyz/core";
@@ -30,6 +36,82 @@ const oneInchService = new OneInchService();
 
 // Initialize vault optimization agent
 const vaultAgent = new VaultOptimizationAgent();
+
+// Initialize deposit service
+const depositService = new MorphoDepositService();
+
+// Initialize intermediary service
+const intermediaryService = new IntermediaryService();
+
+// Helper function to create investment plan and poll
+async function createInvestmentPlanAndPoll(
+  ctx: any,
+  amount: number,
+  riskPreference: string
+) {
+  try {
+    // Get optimized split
+    const riskLevel =
+      riskPreference === "Conservative"
+        ? "Low"
+        : riskPreference === "Aggressive"
+        ? "High"
+        : "Medium";
+    const vaultData = await getVaultDataByRisk(riskLevel);
+    const optimizedSplit = calculateOptimizedSplit(amount, 3, vaultData);
+
+    // Get group members (simplified - in real implementation, get from group)
+    const groupMembers = [ctx.from.id.toString()]; // For now, just the current user
+
+    // Create investment plan
+    const planResult = await intermediaryService.createInvestmentPlan(
+      optimizedSplit,
+      groupMembers,
+      amount
+    );
+
+    if (!planResult.success) {
+      ctx.reply(`❌ Failed to create investment plan: ${planResult.message}`);
+      return;
+    }
+
+    // Create poll with investment details
+    const totalExpectedYield = optimizedSplit.reduce(
+      (sum, split) => sum + split.expectedYield,
+      0
+    );
+    const overallAPY = (totalExpectedYield / amount) * 100;
+    const memberContribution = amount / groupMembers.length;
+
+    const question =
+      `🗳️ Investment Proposal: $${amount} Split Strategy\n\n` +
+      `📊 Overall APY: ${overallAPY.toFixed(2)}%\n` +
+      `💰 Expected Annual Yield: $${totalExpectedYield.toFixed(2)}\n` +
+      `👥 Member Contribution: $${memberContribution.toFixed(2)} each\n\n` +
+      `Should we proceed with this investment strategy?`;
+
+    const options = [
+      "✅ Yes, invest now",
+      "❌ No, cancel investment",
+      "⏰ Maybe later",
+    ];
+
+    // Send poll
+    const poll = await ctx.replyWithPoll(question, options, {
+      is_anonymous: false,
+      allows_multiple_answers: false,
+      explanation: `Investment Plan ID: ${planResult.planId}\n\nThis poll will automatically execute the investment if approved by majority.`,
+      explanation_parse_mode: "HTML",
+    });
+
+    // Store poll and plan info for later processing
+    // In a real implementation, store this in a database
+    console.log(`Created poll ${poll.poll.id} for plan ${planResult.planId}`);
+  } catch (error) {
+    console.error("Error creating investment plan and poll:", error);
+    ctx.reply("❌ Error creating investment plan. Please try again.");
+  }
+}
 
 // Start command - create or get wallet
 bot.start(async (ctx) => {
@@ -145,38 +227,70 @@ bot.command("health", async (ctx) => {
   }
 });
 
-// List vaults command
+// List vaults command with risk filtering and pagination
 bot.command("vaults", async (ctx) => {
   try {
+    const messageText = ctx.message.text;
+    const args = messageText.split(" ");
+    const riskLevel = args[1] || "Medium"; // Default to Medium risk
+    const page = parseInt(args[2]) || 1; // Default to page 1
+
+    // Validate risk level
+    const validRiskLevels = ["Low", "Medium", "High"];
+    const normalizedRiskLevel = validRiskLevels.includes(riskLevel)
+      ? riskLevel
+      : "Medium";
+
     // Send loading message
-    ctx.reply("🔄 <b>Fetching live vault data...</b>", { parse_mode: "HTML" });
-
-    // Fetch live vault data
-    const vaultData = await getVaultData();
-
-    let message = "🏦 <b>Available Vaults (Live Data):</b>\n\n";
-
-    // Sort by APY (highest first) and show top 10
-    const sortedVaults = [...vaultData].sort((a, b) => b.apy - a.apy);
-
-    sortedVaults.slice(0, 10).forEach((vault, index) => {
-      const riskEmoji =
-        vault.risk === "Low" ? "🟢" : vault.risk === "Medium" ? "🟡" : "🔴";
-      message += `${index + 1}. <b>${vault.name}</b> (${vault.symbol})\n`;
-      message += `   📊 APY: <b>${vault.apy.toFixed(2)}%</b> ${riskEmoji} ${
-        vault.risk
-      } Risk\n`;
-      message += `   🏛️ Protocol: ${vault.protocol}\n`;
-      if (vault.totalAssetsUsd) {
-        message += `   💰 TVL: $${parseFloat(
-          vault.totalAssetsUsd
-        ).toLocaleString()}\n`;
-      }
-      message += `\n`;
+    ctx.reply(`🔄 <b>Fetching ${normalizedRiskLevel} risk vaults...</b>`, {
+      parse_mode: "HTML",
     });
 
-    message +=
-      "💡 Use <code>/optimize [amount] [risk]</code> to get an AI-powered optimized investment split!";
+    // Fetch paginated vault data
+    const result = await getVaultDataPaginated(
+      normalizedRiskLevel as "Low" | "Medium" | "High",
+      page,
+      10
+    );
+
+    let message = `🏦 <b>${normalizedRiskLevel} Risk Vaults (Page ${page}):</b>\n\n`;
+
+    if (result.vaults.length === 0) {
+      message += "No vaults found for this risk level.\n\n";
+    } else {
+      result.vaults.forEach((vault, index) => {
+        const riskEmoji =
+          vault.risk === "Low" ? "🟢" : vault.risk === "Medium" ? "🟡" : "🔴";
+        const globalIndex = (page - 1) * 10 + index + 1;
+
+        message += `${globalIndex}. <b>${vault.name}</b> (${vault.symbol})\n`;
+        message += `   📊 APY: <b>${vault.apy.toFixed(2)}%</b> ${riskEmoji} ${
+          vault.risk
+        } Risk\n`;
+        message += `   🏛️ Protocol: ${vault.protocol}\n`;
+        if (vault.totalAssetsUsd) {
+          message += `   💰 TVL: $${parseFloat(
+            vault.totalAssetsUsd
+          ).toLocaleString()}\n`;
+        }
+        message += `\n`;
+      });
+    }
+
+    // Add pagination info
+    if (result.hasMore) {
+      message += `📄 <b>Page ${page}</b> | Use <code>/vaults ${normalizedRiskLevel} ${
+        page + 1
+      }</code> for next page\n\n`;
+    } else if (page > 1) {
+      message += `📄 <b>Page ${page}</b> | Use <code>/vaults ${normalizedRiskLevel} ${
+        page - 1
+      }</code> for previous page\n\n`;
+    }
+
+    message += `💡 <b>Usage:</b>\n`;
+    message += `• <code>/vaults [Low|Medium|High] [page]</code>\n`;
+    message += `• <code>/optimize [amount] [risk]</code> for AI optimization`;
 
     ctx.reply(message, { parse_mode: "HTML" });
   } catch (error) {
@@ -227,12 +341,8 @@ bot.command("optimize", async (ctx) => {
     // Send the AI-generated recommendation
     ctx.reply(recommendation, { parse_mode: "HTML" });
 
-    // Also send a follow-up with poll suggestion
-    const pollMessage =
-      `🗳️ <b>Ready to Invest?</b>\n\n` +
-      `Use <code>/poll ${amount} ${normalizedRiskPreference}</code> to create a group poll for investment confirmation!`;
-
-    ctx.reply(pollMessage, { parse_mode: "HTML" });
+    // Automatically create investment plan and poll
+    await createInvestmentPlanAndPoll(ctx, amount, normalizedRiskPreference);
   } catch (error) {
     console.error("Error optimizing investment:", error);
 
@@ -245,7 +355,8 @@ bot.command("optimize", async (ctx) => {
         parse_mode: "HTML",
       });
 
-      const vaultData = await getVaultData();
+      const riskLevel = "Medium"; // Default to Medium for fallback
+      const vaultData = await getVaultDataByRisk(riskLevel);
       const optimizedSplit = calculateOptimizedSplit(amount, 3, vaultData);
       const totalExpectedYield = optimizedSplit.reduce(
         (sum, split) => sum + split.expectedYield,
@@ -295,7 +406,8 @@ bot.command("poll", async (ctx) => {
     const messageText = ctx.message.text;
     const amount = parseFloat(messageText.split(" ")[1]) || 100;
 
-    const vaultData = await getVaultData();
+    const riskLevel = "Medium"; // Default to Medium for poll command
+    const vaultData = await getVaultDataByRisk(riskLevel);
     const optimizedSplit = calculateOptimizedSplit(amount, 3, vaultData);
     const totalExpectedYield = optimizedSplit.reduce(
       (sum, split) => sum + split.expectedYield,
@@ -642,6 +754,260 @@ bot.command("verify", async (ctx) => {
   }
 });
 
+// Deposit command
+bot.command("deposit", async (ctx) => {
+  try {
+    const messageText = ctx.message.text;
+    const args = messageText.split(" ");
+
+    if (args.length < 3) {
+      ctx.reply(
+        "❌ <b>Usage:</b> <code>/deposit [vault_name] [amount]</code>\n\n" +
+          "Example: <code>/deposit dForce USDC 100</code>",
+        { parse_mode: "HTML" }
+      );
+      return;
+    }
+
+    const vaultName = args.slice(1, -1).join(" "); // Everything except last arg
+    const amount = args[args.length - 1]; // Last arg is amount
+
+    if (isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) {
+      ctx.reply("❌ Please enter a valid amount greater than 0.");
+      return;
+    }
+
+    const telegramId = ctx.from.id.toString();
+
+    // Send loading message
+    ctx.reply("🔄 <b>Finding vault and preparing deposit...</b>", {
+      parse_mode: "HTML",
+    });
+
+    // Get vault data to find the vault
+    const vaultData = await getVaultDataByRisk("Medium"); // Search in medium risk first
+    const vault = vaultData.find(
+      (v) =>
+        v.name.toLowerCase().includes(vaultName.toLowerCase()) ||
+        v.symbol.toLowerCase().includes(vaultName.toLowerCase())
+    );
+
+    if (!vault) {
+      ctx.reply(
+        `❌ Vault "${vaultName}" not found.\n\n` +
+          "💡 Use <code>/vaults</code> to see available vaults.",
+        { parse_mode: "HTML" }
+      );
+      return;
+    }
+
+    if (!vault.underlyingAsset) {
+      ctx.reply("❌ Deposit information not available for this vault.");
+      return;
+    }
+
+    // Show vault info and confirm
+    const vaultInfo = depositService.getVaultDepositInfo(vault);
+    const confirmMessage =
+      `📋 <b>Deposit Confirmation</b>\n\n` +
+      `${vaultInfo}\n\n` +
+      `💰 <b>Amount to Deposit:</b> ${amount} ${vault.underlyingAsset.symbol}\n\n` +
+      `⚠️ <b>This will execute a real transaction on the blockchain.</b>\n\n` +
+      `Type <code>/confirm_deposit ${vault.name} ${amount}</code> to proceed.`;
+
+    ctx.reply(confirmMessage, { parse_mode: "HTML" });
+  } catch (error) {
+    console.error("Error in deposit command:", error);
+    ctx.reply("❌ Error processing deposit request. Please try again.");
+  }
+});
+
+// Confirm deposit command
+bot.command("confirm_deposit", async (ctx) => {
+  try {
+    const messageText = ctx.message.text;
+    const args = messageText.split(" ");
+
+    if (args.length < 3) {
+      ctx.reply("❌ Invalid confirmation format.");
+      return;
+    }
+
+    const vaultName = args.slice(1, -1).join(" ");
+    const amount = args[args.length - 1];
+    const telegramId = ctx.from.id.toString();
+
+    // Send processing message
+    ctx.reply("🔄 <b>Processing deposit transaction...</b>", {
+      parse_mode: "HTML",
+    });
+
+    // Get vault data
+    const vaultData = await getVaultDataByRisk("Medium");
+    const vault = vaultData.find(
+      (v) =>
+        v.name.toLowerCase().includes(vaultName.toLowerCase()) ||
+        v.symbol.toLowerCase().includes(vaultName.toLowerCase())
+    );
+
+    if (!vault) {
+      ctx.reply("❌ Vault not found.");
+      return;
+    }
+
+    // Execute deposit
+    const result = await depositService.depositToVault(
+      telegramId,
+      vault,
+      amount
+    );
+
+    if (result.success) {
+      const successMessage =
+        `✅ <b>Deposit Successful!</b>\n\n` +
+        `🏦 Vault: ${vault.name}\n` +
+        `💰 Amount: ${amount} ${vault.underlyingAsset?.symbol}\n` +
+        `📊 APY: ${vault.apy.toFixed(2)}%\n` +
+        `🔗 Transaction: <code>${result.transactionHash}</code>\n\n` +
+        `💡 Your deposit is now earning ${vault.apy.toFixed(2)}% APY!`;
+
+      ctx.reply(successMessage, { parse_mode: "HTML" });
+    } else {
+      const errorMessage =
+        `❌ <b>Deposit Failed</b>\n\n` +
+        `Error: ${result.message}\n\n` +
+        `Please check your balance and try again.`;
+
+      ctx.reply(errorMessage, { parse_mode: "HTML" });
+    }
+  } catch (error) {
+    console.error("Error in confirm_deposit command:", error);
+    ctx.reply("❌ Error executing deposit. Please try again.");
+  }
+});
+
+// Execute investment command (for poll results)
+bot.command("execute_investment", async (ctx) => {
+  try {
+    const messageText = ctx.message.text;
+    const args = messageText.split(" ");
+
+    if (args.length < 2) {
+      ctx.reply("❌ Usage: /execute_investment [plan_id]");
+      return;
+    }
+
+    const planId = parseInt(args[1]);
+    if (isNaN(planId)) {
+      ctx.reply("❌ Invalid plan ID");
+      return;
+    }
+
+    // Check if plan can be executed
+    const canExecute = await intermediaryService.canExecutePlan(planId);
+    if (!canExecute) {
+      ctx.reply(
+        "❌ Investment plan cannot be executed yet. Not all members have contributed."
+      );
+      return;
+    }
+
+    // Send processing message
+    ctx.reply("🔄 <b>Executing investment plan...</b>", { parse_mode: "HTML" });
+
+    // Execute the investment plan
+    const result = await intermediaryService.executeInvestmentPlan(planId);
+
+    if (result.success) {
+      const successMessage =
+        `✅ <b>Investment Executed Successfully!</b>\n\n` +
+        `📋 Plan ID: ${planId}\n` +
+        `💰 Funds have been distributed to the selected vaults\n` +
+        `📊 Your investment is now earning yield!\n\n` +
+        `💡 Check your vault positions to monitor performance.`;
+
+      ctx.reply(successMessage, { parse_mode: "HTML" });
+    } else {
+      const errorMessage =
+        `❌ <b>Investment Execution Failed</b>\n\n` +
+        `Error: ${result.message}\n\n` +
+        `Please try again or contact support.`;
+
+      ctx.reply(errorMessage, { parse_mode: "HTML" });
+    }
+  } catch (error) {
+    console.error("Error executing investment:", error);
+    ctx.reply("❌ Error executing investment. Please try again.");
+  }
+});
+
+// Contribute to investment plan command
+bot.command("contribute", async (ctx) => {
+  try {
+    const messageText = ctx.message.text;
+    const args = messageText.split(" ");
+
+    if (args.length < 3) {
+      ctx.reply("❌ Usage: /contribute [plan_id] [amount]");
+      return;
+    }
+
+    const planId = parseInt(args[1]);
+    const amount = args[2];
+
+    if (isNaN(planId) || isNaN(parseFloat(amount))) {
+      ctx.reply("❌ Invalid plan ID or amount");
+      return;
+    }
+
+    const telegramId = ctx.from.id.toString();
+
+    // Get plan details
+    const planDetails = await intermediaryService.getPlanDetails(planId);
+    if (!planDetails) {
+      ctx.reply("❌ Investment plan not found");
+      return;
+    }
+
+    // For simplicity, assume USDC token (6 decimals)
+    const tokenAddress = "0xA0b86a33E6441b8C4C8C0C4C8C0C4C8C0C4C8C0C"; // USDC address
+    const decimals = 6;
+
+    // Send processing message
+    ctx.reply("🔄 <b>Processing contribution...</b>", { parse_mode: "HTML" });
+
+    // Contribute to the plan
+    const result = await intermediaryService.contributeToPlan(
+      telegramId,
+      planId,
+      tokenAddress,
+      amount,
+      decimals
+    );
+
+    if (result.success) {
+      const successMessage =
+        `✅ <b>Contribution Successful!</b>\n\n` +
+        `📋 Plan ID: ${planId}\n` +
+        `💰 Amount: ${amount} USDC\n` +
+        `🔗 Transaction: <code>${result.transactionHash}</code>\n\n` +
+        `💡 Your contribution has been recorded. The investment will execute once all members contribute.`;
+
+      ctx.reply(successMessage, { parse_mode: "HTML" });
+    } else {
+      const errorMessage =
+        `❌ <b>Contribution Failed</b>\n\n` +
+        `Error: ${result.message}\n\n` +
+        `Please check your balance and try again.`;
+
+      ctx.reply(errorMessage, { parse_mode: "HTML" });
+    }
+  } catch (error) {
+    console.error("Error contributing to plan:", error);
+    ctx.reply("❌ Error processing contribution. Please try again.");
+  }
+});
+
 // Help command
 bot.help((ctx) =>
   ctx.reply(
@@ -651,9 +1017,13 @@ bot.help((ctx) =>
       "❓ /exists - Check if you have a wallet\n" +
       "🏥 /health - Check API server status\n\n" +
       "🏦 <b>Investment Commands:</b>\n" +
-      "📊 /vaults - List all available USDC vaults with APY\n" +
-      "💰 /optimize [amount] [risk] - AI-powered optimized investment split (default: $100, Balanced)\n" +
-      "🗳️ /poll [amount] - Create group poll for investment confirmation\n\n" +
+      "📊 /vaults [risk] [page] - List vaults by risk level with pagination\n" +
+      "💰 /optimize [amount] [risk] - AI-powered optimized investment split (auto-creates poll)\n" +
+      "🗳️ /poll [amount] - Create group poll for investment confirmation\n" +
+      "💳 /deposit [vault_name] [amount] - Deposit to a specific vault\n" +
+      "✅ /confirm_deposit [vault_name] [amount] - Confirm deposit transaction\n" +
+      "💵 /contribute [plan_id] [amount] - Contribute to an investment plan\n" +
+      "🚀 /execute_investment [plan_id] - Execute investment plan after all contributions\n\n" +
       "💱 <b>Swap Commands:</b>\n" +
       "🪙 /tokens - List available tokens for swapping\n" +
       "📊 /quote &lt;from&gt; &lt;to&gt; &lt;amount&gt; - Get swap quote\n" +

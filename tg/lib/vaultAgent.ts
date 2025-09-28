@@ -2,7 +2,7 @@ import { ChatOpenAI } from "@langchain/openai";
 import { ChatGroq } from "@langchain/groq";
 import { PromptTemplate } from "@langchain/core/prompts";
 import * as dotenv from "dotenv";
-import { Vault, getVaultData } from "./vaultData";
+import { Vault, getVaultDataByRisk } from "./vaultData";
 
 // Load environment variables
 dotenv.config();
@@ -62,8 +62,16 @@ export class VaultOptimizationAgent {
     maxVaults: number = 3,
     timeHorizon: string = "1 year"
   ): Promise<VaultOptimizationResult> {
-    // Fetch live vault data
-    const vaultData = await getVaultData();
+    // Map risk preference to risk level
+    const riskLevel =
+      riskPreference === "Conservative"
+        ? "Low"
+        : riskPreference === "Aggressive"
+        ? "High"
+        : "Medium";
+
+    // Fetch live vault data filtered by risk level (20 vaults max)
+    const vaultData = await getVaultDataByRisk(riskLevel);
 
     // Prepare the vault data for the prompt
     const vaultDataString = vaultData

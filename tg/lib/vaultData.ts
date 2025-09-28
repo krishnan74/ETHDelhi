@@ -23,6 +23,15 @@ export interface Vault {
     url: string;
     verified: boolean;
   }[];
+  // Deposit-related fields
+  underlyingAsset?: {
+    address: string;
+    symbol: string;
+    name: string;
+    decimals: number;
+  };
+  sharePrice?: string;
+  totalSupply?: string;
 }
 
 // Mock data as fallback
@@ -124,18 +133,70 @@ export interface OptimizedSplit {
   expectedYield: number;
 }
 
-// Function to get vault data (live or mock)
-export async function getVaultData(): Promise<Vault[]> {
+// Function to get vault data by risk level (live or mock)
+export async function getVaultDataByRisk(
+  riskLevel: "Low" | "Medium" | "High"
+): Promise<Vault[]> {
   try {
     const { MorphoService } = await import("./morphoService");
     const morphoService = new MorphoService();
-    const morphoVaults = await morphoService.fetchAllVaults();
+    const morphoVaults = await morphoService.fetchVaultsByRisk(riskLevel, 20);
 
     // Convert Morpho vaults to our format
     return morphoVaults.map((vault) => morphoService.convertToVault(vault));
   } catch (error) {
-    console.error("Failed to fetch live vault data, using mock data:", error);
-    return MOCK_VAULT_DATA;
+    console.error(
+      `Failed to fetch live ${riskLevel} risk vault data, using mock data:`,
+      error
+    );
+    // Filter mock data by risk level
+    return MOCK_VAULT_DATA.filter((vault) => vault.risk === riskLevel);
+  }
+}
+
+// Function to get paginated vault data by risk level
+export async function getVaultDataPaginated(
+  riskLevel: "Low" | "Medium" | "High",
+  page: number = 1,
+  pageSize: number = 10
+): Promise<{ vaults: Vault[]; totalCount: number; hasMore: boolean }> {
+  try {
+    const { MorphoService } = await import("./morphoService");
+    const morphoService = new MorphoService();
+    const result = await morphoService.fetchVaultsPaginated(
+      riskLevel,
+      page,
+      pageSize
+    );
+
+    // Convert Morpho vaults to our format
+    const vaults = result.vaults.map((vault) =>
+      morphoService.convertToVault(vault)
+    );
+
+    return {
+      vaults,
+      totalCount: result.totalCount,
+      hasMore: result.hasMore,
+    };
+  } catch (error) {
+    console.error(
+      `Failed to fetch paginated ${riskLevel} risk vault data, using mock data:`,
+      error
+    );
+    // Filter mock data by risk level and paginate
+    const filteredVaults = MOCK_VAULT_DATA.filter(
+      (vault) => vault.risk === riskLevel
+    );
+    const startIndex = (page - 1) * pageSize;
+    const endIndex = startIndex + pageSize;
+    const vaults = filteredVaults.slice(startIndex, endIndex);
+
+    return {
+      vaults,
+      totalCount: filteredVaults.length,
+      hasMore: endIndex < filteredVaults.length,
+    };
   }
 }
 
