@@ -329,7 +329,8 @@ export class IntermediaryService {
   async createInvestmentPlan(
     optimizedSplit: OptimizedSplit[],
     memberAddresses: string[],
-    totalAmount: number
+    totalAmount: number,
+    ownerTelegramId: string
   ): Promise<{
     success: boolean;
     planId?: number;
@@ -364,7 +365,7 @@ export class IntermediaryService {
       const totalAmountAtomic = this.toAtomicAmount(totalAmount.toString(), 18); // Assuming USDC (6 decimals)
 
       // Get owner wallet for contract interaction
-      const ownerWallet = await this.walletService.getWallet("0"); // Assuming owner has telegram ID 0
+      const ownerWallet = await this.walletService.getWallet(ownerTelegramId);
       const ownerEthersWallet = new ethers.Wallet(
         ownerWallet.privateKey,
         this.provider
@@ -511,7 +512,8 @@ export class IntermediaryService {
    * Execute investment plan
    */
   async executeInvestmentPlan(
-    planId: number
+    planId: number,
+    ownerTelegramId: string
   ): Promise<{ success: boolean; message: string; error?: string }> {
     try {
       if (
@@ -528,7 +530,7 @@ export class IntermediaryService {
       }
 
       // Get owner wallet for contract interaction
-      const ownerWallet = await this.walletService.getWallet("0");
+      const ownerWallet = await this.walletService.getWallet(ownerTelegramId);
       const ownerEthersWallet = new ethers.Wallet(
         ownerWallet.privateKey,
         this.provider
