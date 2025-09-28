@@ -1,0 +1,45 @@
+{
+  "name": "pyth-morpho-wrapper",
+  "version": "1.0.0",
+  "description": "Pyth Morpho Wrapper is a wrapper that use the Pyth oracle to provide price data for markets on [Morpho Blue](https://github.com/morpho-org/morpho-blue).",
+  "main": "index.js",
+  "directories": {
+    "lib": "lib",
+    "test": "test"
+  },
+  "scripts": {
+    "test": "forge test",
+    "test:verbose": "forge test -vvv",
+    "test:gas": "forge test --gas-report",
+    "coverage": "forge coverage",
+    "build": "forge build",
+    "deploy": "tsx deploy.ts deploy",
+    "deploy:price": "tsx deploy.ts price",
+    "deploy:flow": "tsx deploy-flow.ts flow",
+    "deploy:base": "tsx deploy-flow.ts base",
+    "interact": "tsx interact.ts interact",
+    "interact:price": "tsx interact.ts price",
+    "interact:config": "tsx interact.ts config",
+    "interact:simple": "tsx interact-simple.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@pythnetwork/pyth-sdk-solidity": "^4.2.0",
+    "ethers": "^6.8.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pyth-network/pyth-morpho-wrapper.git"
+  },
+  "bugs": {
+    "url": "https://github.com/pyth-network/pyth-morpho-wrapper/issues"
+  },
+  "homepage": "https://github.com/pyth-network/pyth-morpho-wrapper#readme"
+}
